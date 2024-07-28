@@ -1,0 +1,393 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Vasmos a cargar el dataset de AirBnB descargado de [aquí](https://public.opendatasoft.com/explore/dataset/airbnb-listings/export/?disjunctive.host_verifications&disjunctive.amenities&disjunctive.features&q=Madrid&dataChart=eyJxdWVyaWVzIjpbeyJjaGFydHMiOlt7InR5cGUiOiJjb2x1bW4iLCJmdW5jIjoiQ09VTlQiLCJ5QXhpcyI6Imhvc3RfbGlzdGluZ3NfY291bnQiLCJzY2llbnRpZmljRGlzcGxheSI6dHJ1ZSwiY29sb3IiOiJyYW5nZS1jdXN0b20ifV0sInhBeGlzIjoiY2l0eSIsIm1heHBvaW50cyI6IiIsInRpbWVzY2FsZSI6IiIsInNvcnQiOiIiLCJzZXJpZXNCcmVha2Rvd24iOiJyb29tX3R5cGUiLCJjb25maWciOnsiZGF0YXNldCI6ImFpcmJuYi1saXN0aW5ncyIsIm9wdGlvbnMiOnsiZGlzanVuY3RpdmUuaG9zdF92ZXJpZmljYXRpb25zIjp0cnVlLCJkaXNqdW5jdGl2ZS5hbWVuaXRpZXMiOnRydWUsImRpc2p1bmN0aXZlLmZlYXR1cmVzIjp0cnVlfX19XSwidGltZXNjYWxlIjoiIiwiZGlzcGxheUxlZ2VuZCI6dHJ1ZSwiYWxpZ25Nb250aCI6dHJ1ZX0%3D&location=16,41.38377,2.15774&basemap=jawg.streets)
+
+![](descargar.png)
+
+```{r}
+airbnb_df<-read.csv('airbnb-listings.csv',sep = ';')
+options(repr.plot.height=4,repr.plot.width=6,repr.plot.res = 300)
+```
+
+1.  Vamos a quedarnos con las columnas de mayor interés: 'City','Room.Type','Neighbourhood','Accommodates','Bathrooms','Bedrooms','Beds','Price','Square.Feet','Guests.Included','Extra.People','Review.Scores.Rating','Latitude', 'Longitude' Nos quedarmos solo con las entradas de Madrid para Room.Type=="Entire home/apt" y cuyo barrio (Neighbourhood) no está vacio '' Podemos eliminar las siguientes columnas que ya no son necesarias: "Room.Type",'City' Llama a nuevo dataframe df_madrid.
+```{r}
+library(dplyr)
+#df_airbnb_filtrado <- airbnb_df[
+#    airbnb_df$City == 'Madrid' & 
+#    airbnb_df$'Room.Type' == 'Entire home/apt' & 
+#    airbnb_df$Neighbourhood != '', 
+#    c('City','Room.Type','Neighbourhood','Accommodates','Bathrooms','Bedrooms','Beds','Pr#ice','Square.Feet','Guests.Included','Extra.People','Review.Scores.Rating','Latitude', #'Longitude')
+#]
+#df_madrid <- df_airbnb_filtrado[, !(names(df_airbnb_filtrado) %in% c("Room.Type", #"City"))]
+df_airbnb_filtrado <- airbnb_df %>%
+  filter(City == 'Madrid', 
+         `Room.Type` == 'Entire home/apt',
+         Neighbourhood != '') %>%
+  select(City, `Room.Type`, Neighbourhood, Accommodates, Bathrooms, Bedrooms, 
+          Beds, Price, `Square.Feet`, `Guests.Included`, `Extra.People`, 
+          `Review.Scores.Rating`, Latitude, Longitude)
+df_madrid <- df_airbnb_filtrado %>%
+  select(-Room.Type, -City)
+```
+
+------------------------------------------------------------------------
+
+2.  Crea una nueva columna llamada Square.Meters a partir de Square.Feet. Recuerda que un pie cuadrado son 0.092903 metros cuadrados.
+```{r}
+df_madrid$Square.Meters <- df_madrid$Square.Feet * 0.092903
+```
+
+------------------------------------------------------------------------
+
+3.  ¿Que porcentaje de los apartamentos no muestran los metros cuadrados? Es decir, ¿cuantos tienen NA en Square.Meters?
+```{r}
+porcentaje_na <- mean(is.na(df_madrid$Square.Meters)) * 100
+print(paste("Porcentaje de apartamentos sin metros cuadrados:", porcentaje_na, "%"))
+```
+
+------------------------------------------------------------------------
+
+4.  De todos los apartamentos que tienen un valor de metros cuadrados diferente de NA ¿Que porcentaje de los apartamentos tienen 0 metros cuadrados?
+```{r}
+library(dplyr)
+df_con_metros <- df_madrid[!is.na(df_madrid$Square.Meters), ]
+porcentaje_cero <- mean(df_con_metros$Square.Meters == 0) * 100
+#n_ceros <- df_con_metros %>% filter(Square.Meters==0) %>% nrow()
+#n_no_ceros <- df_con_metros %>% filter(Square.Meters!=0) %>% nrow()
+#porcentaje_cero <- n_ceros*100/(n_ceros+n_no_ceros)
+print(paste("Porcentaje de apartamentos con 0 metros cuadrados (excluyendo NAs):", porcentaje_cero, "%"))
+```
+
+------------------------------------------------------------------------
+
+5.  Reemplazar todos los 0m\^2 por NA
+```{r}
+df_madrid$Square.Meters[df_madrid$Square.Meters == 0] <- NA
+head(df_madrid)
+```
+
+------------------------------------------------------------------------
+
+Hay muchos NAs, vamos a intentar crear un modelo que nos prediga cuantos son los metros cuadrados en función del resto de variables para tratar de rellenar esos NA. Pero **antes de crear el modelo** vamos a hacer: \* pintar el histograma de los metros cuadrados y ver si tenemos que filtrar algún elemento más. \* crear una variable sintética nueva basada en la similitud entre barrios que usaremos en nuestro modelo.
+
+6.  Pinta el histograma de los metros cuadrados y ver si tenemos que filtrar algún elemento más
+```{r}
+library(ggplot2)
+ggplot(df_madrid, aes(x = Square.Meters)) +
+  geom_histogram(bins = 30, fill = "lightblue", color = "black") +
+  labs(title = "Histograma de Metros Cuadrados",
+       x = "Metros Cuadrados",
+       y = "Frecuencia") +
+  theme_minimal()
+```
+
+------------------------------------------------------------------------
+
+7.  Asigna el valor NA a la columna Square.Meters de los apartamentos que tengan menos de 20 m\^2
+```{r}
+df_madrid$Square.Meters[df_madrid$Square.Meters < 20] <- NA
+```
+
+------------------------------------------------------------------------
+
+8.  Existen varios Barrios que todas sus entradas de Square.Meters son NA, vamos a eliminar del dataset todos los pisos que pertenecen a estos barrios.
+```{r}
+#na_counts <- tapply(df_madrid$Square.Meters, df_madrid$Neighbourhood, function(x) sum(is.na(x)))
+#barrios_all_na <- names(na_counts[na_counts == table(df_madrid$Neighbourhood)])
+#df_filtered <- df_madrid[(df_madrid$Neighbourhood %in% barrios_all_na), ]
+#df_madrid_filtered_na <- df_madrid %>%group_by(Neighbourhood)%>%filter(!all(is.na(Square.Meters))) %>%ungroup()
+```
+```{r}
+df_madrid_2 <- df_madrid %>% group_by(Neighbourhood) %>% summarize(Square_na=sum(is.na(Square.Meters)), num_total=n()) %>% filter(Square_na==num_total)
+df_madrid <- df_madrid %>% filter(!(Neighbourhood %in% df_madrid_2$Neighbourhood))
+```
+
+    ------------------------------------------------------------------------
+
+9.  ¿Tienen todos los barrios los mismos metros cuadrados de media? ¿Con que test lo comprobarías?
+Lo compruebo con el test de Shapiro
+```{r}
+shapiro.test(df_madrid$Square.Meters)
+
+# Realizar el test de Kruskal-Wallis
+kruskal_test <- kruskal.test(Square.Meters ~ Neighbourhood, data = df_madrid)
+print(kruskal_test)
+```
+
+    ------------------------------------------------------------------------
+
+10. Vamos a agrupar los barrios por metros cuadrados. Podemos usar una matriz de similaridad de Tukey. Muestra como de similares o diferentes son los barrios si nos fijámos únicamente en los metros cuadrados de los pisos. ¿Como se diferencia la media del Barrio A al Barrio B? (Es decir, cual sería el pvalor suponiendo una H0 en la que las medias son iguales)
+```{r}
+tky<-TukeyHSD(aov( Square.Meters ~ Neighbourhood, data = df_madrid))
+tky.result<-data.frame(tky$Neighbourhood)
+cn <-sort(unique(df_madrid$Neighbourhood))
+resm <- matrix(NA, length(cn),length(cn))
+rownames(resm) <- cn
+colnames(resm) <- cn
+resm[lower.tri(resm) ] <- round(tky.result$p.adj,4)
+resm[upper.tri(resm) ] <- t(resm)[upper.tri(resm)] 
+diag(resm) <- 1
+library(ggplot2)
+library(reshape2)
+dfResm <- melt(resm)
+ggplot(dfResm, aes(x=Var1, y=Var2, fill=value))+
+  geom_tile(colour = "black")+
+  geom_text(aes(label=paste(round(value*100,0),"%")),size = 3) +
+  scale_fill_gradient(low = "white",high = "steelblue")+
+  ylab("Class")+xlab("Class")+theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.position="none")
+
+```
+
+------------------------------------------------------------------------
+
+11. En el punto anterior has creado una matriz de p-valores que indica como de parecidos son dos barrios. Si su pvalor es alto significa que los barrios son diferentes, si es bajo significa que los barrios se parecen. Esta matriz la podemos usar como matriz de distancia si restamos el pvalor a 1. Es decir si usamos como distancia 1-pvalor. De esta forma barrios con un pvalor alto tendrán una distancia mayor que aquellos con un pvalor bajo. Usando esta última métrica como matriz de distancias dibuja un dendrograma de los diferentes barrios.
+```{r}
+dist_matrix <-1- abs(resm)
+dist_object <- as.dist(dist_matrix)
+hc <- hclust(dist_object, method = "complete") 
+plot(hc, hang = -1, main = "Dendrograma de Barrios", xlab = "Barrios", ylab = "Distancia (1-pvalor)")
+
+```
+```{r}
+library(dendextend)
+library(RColorBrewer)
+
+resm.dist<- as.dist(1 - abs(resm))
+resm.tree <- hclust(resm.dist, method="complete")
+resm.dend <- as.dendrogram(resm.tree)
+
+plot(resm.tree, hang = -1, main = "Dendrograma de Barrios",ylab="Distancia(1-pvalor)", xlab = "Barrios", sub = "", cex = 0.9)
+
+grupos <- 3  
+colores <- brewer.pal(grupos, "Set1")  
+col = colores[cutree(resm.tree, k = grupos)]
+rect.hclust(resm.tree, k = grupos, border = colores)
+
+```
+
+------------------------------------------------------------------------
+
+10. ¿Que punto de corte sería el aconsejable?, ¿cuantos clusters aparecen?
+
+Respuesta. En 0.2. Aparecen 3 clústeres
+
+
+------------------------------------------------------------------------
+
+11. Vamos a crear una nueva coltumna en el dataframe df_madrid con un nuevo identificador marcado por los clusters obtenidos. Esta columna la llamaremos neighb_id
+
+```{r}
+clusters <- cutree(resm.tree, k = grupos)
+barrios <- names(clusters) 
+df_clusters <- data.frame(Neighbourhood = barrios, neighb_id = clusters)
+df_madrid <- merge(df_madrid, df_clusters, by = "Neighbourhood")
+df_madrid$neighb_id.y <- NULL 
+df_madrid$neighb_id.x <- NULL
+df_madrid$neighb_id <- factor(df_madrid$neighb_id)  
+```
+Pairwise Wilcoxon test
+```{r}
+variables_to_compare <- c("Bedrooms", "Bathrooms", "Guests.Included", "Latitude", "Longitude", "Review.Scores.Rating", "Beds", "Accommodates", "Extra.People", "Price")
+
+for (variable in variables_to_compare) {
+  formula <- as.formula(paste(variable, "~ neighb_id"))  
+  result <- pairwise.wilcox.test(df_madrid[[variable]], df_madrid$neighb_id, p.adjust.method = "bonferroni")
+  print(paste("Pairwise Wilcoxon Test for", variable))
+  print(result)
+}
+```
+
+------------------------------------------------------------------------
+
+12. Vamos a crear dos grupos, uno test y otro train.
+```{r}
+library(caret)
+set.seed(123) 
+ 
+columnas_a_excluir <- c("Square.Feet", "Guests.Included", "Latitude", "Longitude","Neighbourhood", "Review.Scores.Rating", "Beds", "Accommodates", "Extra.People", "Extra.People", "Price")  
+train_index <- createDataPartition(df_madrid$neighb_id, p = 0.7, list = FALSE)
+train_data <- df_madrid[train_index, !(names(df_madrid) %in% columnas_a_excluir)]
+test_data <- df_madrid[-train_index, !(names(df_madrid) %in% columnas_a_excluir)]
+
+```
+
+------------------------------------------------------------------------
+
+13. Tratamos de predecir los metros cuadrados en función del resto de columnas del dataframe.
+
+```{r}
+modelo_lm <- lm(Square.Meters ~ ., data = train_data)
+
+summary(modelo_lm)
+
+```
+
+------------------------------------------------------------------------
+
+14. Evaluar la calidad de vuestro modelo 
+```{r}
+predicciones <- predict(modelo_lm, newdata = test_data)
+rmse <- sqrt(mean((predicciones - test_data$Square.Meters)^2,na.rm = TRUE))
+print(rmse)
+```
+
+------------------------------------------------------------------------
+
+15. Si tuvieramos un anuncio de un apartamento para 6 personas (Accommodates), con 1 baño, con un precio de 80€/noche y 3 habitaciones en el barrio de Sol, con 3 camas y un review de 80. ¿Cuantos metros cuadrados tendría? Si tu modelo necesita algúna variable adicional puedes inventartela dentro del rango de valores del dataset. ¿Como varía sus metros cuadrados con cada habitación adicional?
+```{r}
+new_data <- data.frame(
+  Accommodates = 6,
+  Bathrooms = 1,
+  Price = 80,
+  Bedrooms = 3,
+  neighb_id = factor(3),
+  Beds = 3,
+  Review.Scores.Rating = 80)
+predicted_sq_meters <- predict(modelo_lm, newdata = new_data)
+print(paste("Valor predicho:",predicted_sq_meters, "metros cuadrados"))
+coef(modelo_lm)["Bedrooms"]
+coef(modelo_lm)["Bathrooms"]
+coef(modelo_lm)
+```
+
+
+```{r}
+new_data_list_1 <- list(
+  data.frame(Bedrooms = 1, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(3),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 2, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(3),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 3, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(3),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 4, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(3),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 5, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(3),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 6, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(3),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 7, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(3),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 8, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(3),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 9, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(3),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 10, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(3),Beds=3,
+             Review.Scores.Rating = 80))
+
+predictions_neigh3 <- sapply(new_data_list_1, function(data) predict(modelo_lm, newdata = data))
+
+new_data_list_2 <- list(
+  data.frame(Bedrooms = 1, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(2),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 2, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(2),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 3, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(2),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 4, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(2),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 5, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(2),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 6, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(2),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 7, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(2),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 8, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(2),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 9, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(2),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 10, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(2),Beds=3,
+             Review.Scores.Rating = 80))
+
+predictions_neigh2 <- sapply(new_data_list_2, function(data) predict(modelo_lm, newdata = data))
+
+
+new_data_list_3 <- list(
+  data.frame(Bedrooms = 1, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(1),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 2, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(1),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 3, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(1),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 4, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(1),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 5, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(1),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 6, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(1),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 7, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(1),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 8, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(1),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 9, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(1),Beds=3,
+             Review.Scores.Rating = 80),
+  data.frame(Bedrooms = 10, Accommodates=6,Bathrooms=1,Price=80,Bedrooms=3,neighb_id=factor(1),Beds=3,
+             Review.Scores.Rating = 80))
+
+predictions_neigh1 <- sapply(new_data_list_3, function(data) predict(modelo_lm, newdata = data))
+
+plot_data <- data.frame(
+  Bedrooms = rep(1:10, 3),  # Bedrooms 1 to 10 for each neighb_id
+  Predicted_SqMeters = c(predictions_neigh1, predictions_neigh2, predictions_neigh3),
+  neighb_id = rep(1:3, each = 10)  # Indicate which neighb_id each prediction belongs to
+)
+
+ggplot(plot_data, aes(x = Bedrooms, y = Predicted_SqMeters, color = factor(neighb_id))) +
+  geom_line() +
+  labs(title = "Predicted Square Meters vs. Number of Bedrooms by Neighborhood",
+       x = "Number of Bedrooms",
+       y = "Predicted Square Meters",
+       color = "Neighborhood ID") +
+  scale_x_continuous(breaks = 1:10)  
+```
+
+
+
+------------------------------------------------------------------------
+```{r}
+new_data <- data.frame(
+Bathrooms = c(1, 2, 3, 4,1,2,3,4,1,2,3,4), 
+Bedrooms = c(1, 2, 3, 4,1,2,3,4,1,2,3,4),
+neighb_id = factor(c(1, 1, 1, 1,2,2,2,2,3,3,3,3)) )
+  
+new_data$Predicted_SqMeters <- predict(modelo_lm, newdata = new_data)
+
+library(plotly)
+
+plot_ly(new_data, 
+        x = ~Bedrooms, 
+        y = ~Bathrooms, 
+        z = ~Predicted_SqMeters, 
+        color = ~factor(neighb_id), 
+        type = "scatter3d", 
+        mode = "lines+markers") %>%
+  layout(title = "Predicted Square Meters vs. Bedrooms, Bathrooms, and Neighborhood",
+         scene = list(xaxis = list(title = "Bedrooms"),
+                      yaxis = list(title = "Bathrooms"),
+                      zaxis = list(title = "Predicted Sq Meters")))
+```
+
+16. Rellenar los Square.Meters con valor NA con el estimado con el modelo anterior.
+```{r}
+datos_na <- df_madrid[is.na(df_madrid$Square.Meters), ]
+predicciones_na <- predict(modelo_lm, newdata = datos_na)
+df_madrid[is.na(df_madrid$Square.Meters), "Square.Meters"] <- predicciones_na
+```
+```{r}
+library(ggplot2)
+plot_ly(df_madrid, 
+        x = ~neighb_id, 
+        y = ~Bathrooms, 
+        z = ~Square.Meters, 
+        color = ~factor(neighb_id), 
+        type = "scatter3d", 
+        mode = "lines+markers") %>%
+  layout(title = "Predicted Square Meters vs. Bedrooms, Bathrooms, and Neighborhood",
+         scene = list(xaxis = list(title = "Bedrooms"),
+                      yaxis = list(title = "Bathrooms"),
+                      zaxis = list(title = "Predicted Sq Meters")))
+```
+
